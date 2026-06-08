@@ -1,0 +1,23 @@
+services:
+  app:
+    build: ./app
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  tests:
+    image: mcr.microsoft.com/playwright:v1.56.0-jammy
+    depends_on:
+      app:
+        condition: service_healthy
+    working_dir: /work
+    volumes:
+      - ./:/work
+    environment:
+      # point the suite at the app service instead of localhost
+      BASE_URL: http://app:3000
+    command: sh -c "npm ci && npx playwright test --project=api --project=chromium"

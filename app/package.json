@@ -1,0 +1,12 @@
+{
+  "name": "taskboard-app",
+  "version": "1.0.0",
+  "description": "Tiny demo app under test (Express + static UI). Not the deliverable - it exists so the test framework has something real to drive.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

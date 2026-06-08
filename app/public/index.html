@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TaskBoard</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 560px; margin: 40px auto; padding: 0 16px; }
+    h1 { font-size: 22px; }
+    input, button { font-size: 15px; padding: 8px 10px; margin: 4px 0; }
+    .row { display: flex; gap: 8px; align-items: center; }
+    .task { display: flex; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid #eee; }
+    .task.done span { text-decoration: line-through; color: #888; }
+    .error { color: #c0392b; min-height: 18px; }
+    .hidden { display: none; }
+    button { cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>TaskBoard</h1>
+
+  <!-- Login view -->
+  <section id="login-view">
+    <div class="row"><input id="username" data-testid="username" placeholder="Username" /></div>
+    <div class="row"><input id="password" data-testid="password" type="password" placeholder="Password" /></div>
+    <button id="login-btn" data-testid="login-btn">Log in</button>
+    <p class="error" id="login-error" data-testid="login-error"></p>
+  </section>
+
+  <!-- App view -->
+  <section id="app-view" class="hidden">
+    <p>Signed in as <strong id="who" data-testid="who"></strong>
+      <button id="logout-btn" data-testid="logout-btn">Log out</button></p>
+    <div class="row">
+      <input id="new-task" data-testid="new-task" placeholder="New task title" />
+      <button id="add-btn" data-testid="add-btn">Add</button>
+    </div>
+    <p class="error" id="task-error" data-testid="task-error"></p>
+    <div id="task-list" data-testid="task-list"></div>
+  </section>
+
+  <script>
+    const API = '';
+    const $ = (id) => document.getElementById(id);
+    const token = () => localStorage.getItem('token');
+
+    async function api(path, opts = {}) {
+      const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+      if (token()) headers.Authorization = 'Bearer ' + token();
+      const res = await fetch(API + path, { ...opts, headers });
+      return res;
+    }
+
+    function show(view) {
+      $('login-view').classList.toggle('hidden', view !== 'login');
+      $('app-view').classList.toggle('hidden', view !== 'app');
+    }
+
+    async function login() {
+      $('login-error').textContent = '';
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: $('username').value, password: $('password').value }),
+      });
+      if (!res.ok) { $('login-error').textContent = 'Invalid credentials'; return; }
+      const data = await res.json();
+      localStorage.setItem('token', data.token);
+      localStorage.setItem('user', data.user.username);
+      enterApp();
+    }
+
+    function logout() { localStorage.clear(); show('login'); }
+
+    async function enterApp() {
+      $('who').textContent = localStorage.getItem('user') || '';
+      show('app');
+      await render();
+    }
+
+    async function render() {
+      const res = await api('/api/tasks');
+      if (!res.ok) return logout();
+      const tasks = await res.json();
+      $('task-list').innerHTML = '';
+      tasks.forEach((t) => {
+        const div = document.createElement('div');
+        div.className = 'task' + (t.done ? ' done' : '');
+        div.setAttribute('data-testid', 'task-' + t.id);
+        div.innerHTML =
+          `<input type="checkbox" data-testid="toggle-${t.id}" ${t.done ? 'checked' : ''}/>` +
+          `<span data-testid="title-${t.id}">${t.title}</span>` +
+          `<button data-testid="delete-${t.id}">Delete</button>`;
+        div.querySelector('input').addEventListener('change', (e) => toggle(t.id, e.target.checked));
+        div.querySelector('button').addEventListener('click', () => del(t.id));
+        $('task-list').appendChild(div);
+      });
+    }
+
+    async function addTask() {
+      $('task-error').textContent = '';
+      const title = $('new-task').value;
+      const res = await api('/api/tasks', { method: 'POST', body: JSON.stringify({ title }) });
+      if (res.status === 422) { $('task-error').textContent = 'Title is required'; return; }
+      $('new-task').value = '';
+      await render();
+    }
+
+    async function toggle(id, done) {
+      await api('/api/tasks/' + id, { method: 'PUT', body: JSON.stringify({ done }) });
+      await render();
+    }
+    async function del(id) {
+      await api('/api/tasks/' + id, { method: 'DELETE' });
+      await render();
+    }
+
+    $('login-btn').addEventListener('click', login);
+    $('logout-btn').addEventListener('click', logout);
+    $('add-btn').addEventListener('click', addTask);
+
+    if (token()) enterApp(); else show('login');
+  </script>
+</body>
+</html>

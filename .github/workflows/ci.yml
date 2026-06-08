@@ -1,0 +1,54 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  smoke:
+    # Fast feedback on every push/PR: API tests + Chromium UI only.
+    name: Smoke (API + Chromium)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm ci --prefix app
+      - name: Install Playwright (Chromium only)
+        run: npx playwright install --with-deps chromium
+      - name: Run API + Chromium tests
+        run: npx playwright test --project=api --project=chromium
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report-smoke
+          path: playwright-report/
+          retention-days: 7
+
+  full:
+    # Full cross-browser regression: Chromium, Firefox, WebKit.
+    name: Full cross-browser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm ci --prefix app
+      - name: Install all Playwright browsers
+        run: npx playwright install --with-deps
+      - name: Run full suite
+        run: npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report-full
+          path: playwright-report/
+          retention-days: 14
