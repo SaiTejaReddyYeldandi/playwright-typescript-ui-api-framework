@@ -21,7 +21,6 @@ export default defineConfig({
     trace: 'on-first-retry',       // capture a full trace only when a test retries
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
-    channel: 'chromium',
   },
 
   projects: [
