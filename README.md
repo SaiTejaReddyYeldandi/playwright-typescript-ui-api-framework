@@ -23,7 +23,7 @@ A production-grade test automation framework that tests the **same application a
 11. [Key Concepts Explained](#11-key-concepts-explained)
 12. [Interview Notes — Talking Points](#12-interview-notes--talking-points)
 13. [Selenium → Playwright Quick Map](#13-selenium--playwright-quick-map)
-14. [Real Bug Fixed in This Project](#14-real-bug-fixed-in-this-project)
+14. [Real Bugs Fixed in This Project](#14-real-bugs-fixed-in-this-project)
 
 ---
 
@@ -51,7 +51,7 @@ A production-grade test automation framework that tests the **same application a
 |---|---|---|
 | [Playwright](https://playwright.dev) | 1.56 | Test runner, browser automation, API client |
 | TypeScript | 5.6 | Type-safe test code |
-| Node.js | 20 | Runtime |
+| Node.js | 20 / 22 LTS | Runtime — use an LTS version. **Node 24 breaks the Playwright 1.56 browser installer** (download succeeds, unzip hangs at 100%). See [§7 Troubleshooting](#troubleshooting--browser-install-hangs-at-100-node-24) |
 | Express | — | The demo app under test |
 | Docker + Docker Compose | — | Containerised app + CI-identical local runs |
 | GitHub Actions | — | CI/CD pipeline |
@@ -90,7 +90,7 @@ playwright-typescript-ui-api-framework/
 ├── docs/
 │   └── TRACEABILITY.md           # Requirement → test mapping (11 requirements)
 │
-├── playwright.config.ts          # Projects, reporters, webServer, env config
+├── playwright.config.ts          # Projects, reporters, env config (no global webServer)
 ├── docker-compose.yml            # Runs app + tests together in containers
 ├── .github/workflows/ci.yml      # Smoke job + full cross-browser job
 ├── package.json                  # npm scripts
@@ -163,17 +163,19 @@ Maps requirements to automated checks — the same discipline used with Jira + X
 ## 7. How to Run Locally
 
 ### Prerequisites
-- Node.js 20+
-- (Windows only) Add a Windows Defender exclusion before installing browsers — see below
+- **Node.js LTS (20 or 22).** Avoid Node 24 — it hangs the Playwright browser installer (see [Troubleshooting](#troubleshooting--browser-install-hangs-at-100-node-24)).
+- (Windows only) A Windows Defender exclusion can speed up / unblock the browser install — see below.
 
-### Windows Defender — One-Time Fix
-Windows Defender deletes Playwright browser `.exe` files on download. Add this folder as an exclusion first:
+### Windows Defender — Optional One-Time Fix
+Windows Defender scans each Playwright browser `.exe` as it is unzipped, which can slow or stall the install. Adding the browser cache as an exclusion avoids it:
 
 ```
 Windows Security → Virus & threat protection → Manage settings
 → Exclusions → Add an exclusion → Folder
 → Paste: %LOCALAPPDATA%\ms-playwright
 ```
+
+> If the install still hangs at 100% **after** turning Defender off, Defender is not the cause — you are almost certainly on Node 24. Jump to [Troubleshooting](#troubleshooting--browser-install-hangs-at-100-node-24).
 
 ### Setup (one-time)
 
@@ -197,7 +199,49 @@ npm run typecheck         # TypeScript type check (no test run)
 ```
 
 ### How the app server works locally
-`playwright.config.ts` has a `webServer` block. When `BASE_URL` is not set in your environment, Playwright **automatically starts** `node app/server.js` on port 3000 before the tests and kills it after. You do not need to start the app manually.
+There is **no global `webServer` block** and no fixed port. Each Playwright **worker boots its own copy** of the Express app on an OS-assigned (ephemeral) port via the worker-scoped `workerServer` fixture in `fixtures/test-fixtures.ts`, and points `baseURL` at it. You do not start the app manually. This isolates the in-memory database **per worker**, so parallel resets can never clobber each other (see [§14 Real Bugs Fixed](#14-real-bugs-fixed-in-this-project)). Set `BASE_URL` to run against an already-running app instead (Docker/CI/staging) — the fixture honours it and boots nothing.
+
+### Troubleshooting — browser install hangs at 100% (Node 24)
+
+**Symptom:** `npx playwright install` downloads a browser to `100%` and then **freezes forever** during extraction. Toggling Windows Defender off makes no difference.
+
+**Cause:** Playwright 1.56's unzip step hangs on **Node.js v24** (too new for that Playwright release). The *download* always succeeds — only the *extraction* wedges. Confirm with:
+```powershell
+$env:DEBUG='pw:install'; npx playwright install chromium
+```
+You'll see `downloading ... -- to location: ...\playwright-download-*.zip`, the bar reach 100%, and then **nothing** — no "extracting" line. Running tests on Node 24 is fine; only the installer's unzip is broken.
+
+**Fix A — recommended: use an LTS Node.** Install Node 20 or 22 (e.g. via [nvm-windows](https://github.com/coreybutler/nvm-windows): `nvm install 22 && nvm use 22`), then `npx playwright install` works normally.
+
+**Fix B — keep Node 24, install browsers manually.** Download the exact browser zips with `curl` and unzip with Windows' built-in `Expand-Archive` (native tools — they don't hit the broken code path), then drop in the `INSTALLATION_COMPLETE` marker Playwright checks for. Revisions come from `node_modules/playwright-core/browsers.json` and **must match your installed Playwright version** (the ones below are for Playwright 1.56):
+
+```powershell
+# Run in PowerShell. Revisions are for Playwright 1.56 — verify against browsers.json after any upgrade.
+$ProgressPreference = 'SilentlyContinue'
+$root   = "$env:LOCALAPPDATA\ms-playwright"
+$mirror = "https://cdn.playwright.dev/dbazure/download/playwright"
+$items = @(
+  @{ dir='chromium-1194';                url="$mirror/builds/chromium/1194/chromium-win64.zip" },
+  @{ dir='chromium_headless_shell-1194'; url="$mirror/builds/chromium/1194/chromium-headless-shell-win64.zip" },
+  @{ dir='firefox-1495';                 url="$mirror/builds/firefox/1495/firefox-win64.zip" },
+  @{ dir='webkit-2215';                  url="$mirror/builds/webkit/2215/webkit-win64.zip" },
+  @{ dir='ffmpeg-1011';                  url="$mirror/builds/ffmpeg/1011/ffmpeg-win64.zip" },
+  @{ dir='winldd-1007';                  url="$mirror/builds/winldd/1007/winldd-win64.zip" }  # Windows dependency check
+)
+foreach ($it in $items) {
+  $target = Join-Path $root $it.dir
+  $zip    = Join-Path $env:TEMP ($it.dir + '.zip')
+  & curl.exe -L --fail --silent --show-error -o $zip $it.url
+  if (Test-Path $target) { Remove-Item -Recurse -Force $target }
+  New-Item -ItemType Directory -Force -Path $target | Out-Null
+  Expand-Archive -Path $zip -DestinationPath $target -Force
+  New-Item -ItemType File -Path (Join-Path $target 'INSTALLATION_COMPLETE') -ErrorAction SilentlyContinue | Out-Null
+  Remove-Item -Force $zip
+}
+"Done. Now run: npm test"
+```
+
+> `winldd` (`PrintDeps.exe`) is not a browser but Playwright requires it on Windows to validate browser dependencies at launch — skip it and every browser launch fails with `Executable doesn't exist at ...winldd-1007\PrintDeps.exe`. These folders live in `%LOCALAPPDATA%\ms-playwright` (outside the repo) and persist until you upgrade Playwright.
 
 ---
 
@@ -230,9 +274,9 @@ Two jobs run on every push and pull request to `main`:
 - Browser install: All browsers (`npx playwright install --with-deps`)
 
 Both jobs:
-- Use `ubuntu-latest` runner (Linux, no Defender)
+- Use `ubuntu-latest` runner (Linux, no Defender, LTS Node — no install hang)
 - Run `npm ci` + `npm ci --prefix app`
-- Let `playwright.config.ts` auto-start the app via `webServer`
+- Let each Playwright worker boot its own app instance (per-worker `workerServer` fixture)
 - Upload the Playwright HTML report as a downloadable artifact (7-day / 14-day retention)
 
 The green badge at the top of this README comes from this workflow.
@@ -264,7 +308,10 @@ Custom fixtures (`fixtures/test-fixtures.ts`) solve all three:
 - Testing the same requirement at both layers catches two different classes of bug: broken backend logic (API) and broken frontend wiring (UI).
 
 ### Why env-driven `BASE_URL`?
-`playwright.config.ts` reads `process.env.BASE_URL`. When it is set, the config skips the `webServer` block and points tests at an external app (used by Docker compose and allows pointing at staging/QA environments). When unset (local dev), Playwright starts the app itself.
+The `workerServer` fixture reads `process.env.BASE_URL`. When it is set, each worker **skips booting a server** and points tests at that external app (used by Docker compose and for staging/QA environments). When unset (local dev), every worker boots its own Express instance on an ephemeral port. Either way, tests use relative paths (`page.goto('/')`, `api.get('/api/tasks')`) resolved against the fixture-provided `baseURL`, so nothing else changes.
+
+### Why a server per worker (not one shared server)?
+The app's "database" is in memory, and `resetState` reseeds it before every test. With one shared server across parallel workers, one test's reset wipes another test's data mid-flight. Booting one app **per worker** isolates that state — see [§14 Real Bugs Fixed](#14-real-bugs-fixed-in-this-project) for the exact race this fixed.
 
 ---
 
@@ -293,7 +340,7 @@ A "project" is a named configuration slice. This project has 4:
 Run a specific project: `npx playwright test --project=chromium`
 
 ### `fullyParallel: true`
-Tests within a spec file run in parallel (not just file-by-file). This is safe because `resetState` autouse fixture reseeds the app before each individual test.
+Tests are distributed across workers at the individual-test level (not just file-by-file). This is safe because each worker runs its **own** app instance (`workerServer` fixture) and the `resetState` autouse fixture reseeds that instance before each test — so resets in one worker can't affect another.
 
 ### Traces, screenshots, videos
 ```typescript
@@ -367,9 +414,11 @@ If you know Selenium/Java, this is how the concepts translate:
 
 ---
 
-## 14. Real Bug Fixed in This Project
+## 14. Real Bugs Fixed in This Project
 
-### The Problem
+### Bug 1 — `channel` option crashed Firefox & WebKit
+
+#### The Problem
 After the initial push to GitHub, the **Smoke CI job passed** (API + Chromium) but the **Full cross-browser job failed** at the "Run full suite" step. The error was caused by a single line in `playwright.config.ts`:
 
 ```typescript
@@ -379,7 +428,7 @@ use: {
 }
 ```
 
-### Why It Failed
+#### Why It Failed
 `channel` is a Playwright option for selecting a specific Chromium distribution (like Chrome Stable or Chrome Beta). It is **only valid for Chromium**. Firefox and WebKit do not support the `channel` option and throw a hard error:
 
 ```
@@ -389,10 +438,10 @@ Error: WebKit does not support "channel" option.
 
 Because the setting was in the **global** `use` block, all projects inherited it — including Firefox and WebKit. Chromium handled it fine (hence Smoke passed), but Firefox and WebKit crashed before a single test ran.
 
-### The Fix
+#### The Fix
 Removed `channel: 'chromium'` from the global `use` block. Playwright uses the bundled Chromium by default anyway — the setting was unnecessary for Chromium and fatal for the others.
 
-### The Lesson
+#### The Lesson
 Always scope Chromium-specific options (like `channel`) inside the Chromium project's `use` block, not the global one. Global `use` settings are inherited by **every** project including Firefox and WebKit.
 
 ```typescript
@@ -408,6 +457,20 @@ projects: [
 ```
 
 This is the kind of real debugging that happens in every project — CI passes on one browser, fails on another, and the root cause is a config option that one engine supports and others don't.
+
+### Bug 2 — shared in-memory state raced under parallel workers
+
+#### The Problem
+The API test `full lifecycle: create → read → update → delete` failed intermittently: `CREATE` returned `201`, then the very next `READ` of that same task returned `404`. The task vanished between two back-to-back calls.
+
+#### Why It Failed
+A **single** Express server (booted by a global `webServer` block) served **all** parallel workers, but the app keeps its task list **in memory**, and the autouse `resetState` fixture calls `POST /api/reset` (`tasks = [...]`) before **every** test. So while the lifecycle test was mid-flight, another test in another worker fired its reset and wiped the freshly-created task. With `fullyParallel: true` and many workers hitting one shared store, any two tests could clobber each other — multi-step tests just exposed it most often.
+
+#### The Fix
+Each worker now boots **its own** Express instance on an ephemeral port (worker-scoped `workerServer` fixture in `fixtures/test-fixtures.ts`) and `baseURL` points at it; the global `webServer` block was removed. Within a worker Playwright runs tests serially, so reset-before-each is always safe, and no worker can touch another worker's data. `BASE_URL` still overrides this to target an external app. Fixed in commit `8a36b4d`.
+
+#### The Lesson
+A shared mutable backend plus `fullyParallel` plus a global "reset" is a race waiting to happen. Isolate per-worker state (own server, own DB, or namespaced data) instead of serializing the whole suite — you keep the speed of parallelism without the flake. A `mode: 'serial'` band-aid only orders tests *within one file*; it does not stop other files/projects from resetting the same shared server.
 
 ---
 
