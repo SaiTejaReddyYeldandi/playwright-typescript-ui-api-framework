@@ -1,13 +1,11 @@
 import { defineConfig, devices } from '@playwright/test';
 
 /**
- * BASE_URL lets CI / docker-compose point the suite at an already-running app.
- * When it is unset (local dev), Playwright boots the demo app itself via the
- * webServer block below and shuts it down after the run.
+ * Each worker boots its own copy of the demo app on an ephemeral port (see the
+ * `workerServer` fixture), so the suite needs no global webServer and no fixed
+ * port. Set BASE_URL to point the suite at an already-running app instead
+ * (CI / docker-compose) - the fixture honours it and boots nothing.
  */
-const BASE_URL = process.env.BASE_URL || 'http://127.0.0.1:3000';
-const MANAGE_OWN_SERVER = !process.env.BASE_URL;
-
 export default defineConfig({
   testDir: './tests',
   fullyParallel: true,
@@ -17,7 +15,6 @@ export default defineConfig({
   reporter: [['html', { open: 'never' }], ['list']],
 
   use: {
-    baseURL: BASE_URL,
     trace: 'on-first-retry',       // capture a full trace only when a test retries
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
@@ -32,13 +29,4 @@ export default defineConfig({
     { name: 'firefox',  testMatch: /tests\/ui\/.*\.spec\.ts/, use: { ...devices['Desktop Firefox'] } },
     { name: 'webkit',   testMatch: /tests\/ui\/.*\.spec\.ts/, use: { ...devices['Desktop Safari'] } },
   ],
-
-  webServer: MANAGE_OWN_SERVER
-    ? {
-        command: 'node app/server.js',
-        url: 'http://127.0.0.1:3000/health',
-        reuseExistingServer: !process.env.CI,
-        timeout: 60_000,
-      }
-    : undefined,
 });

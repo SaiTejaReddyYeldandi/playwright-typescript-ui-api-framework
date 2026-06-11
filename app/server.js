@@ -20,6 +20,7 @@ let tasks = [];
 let nextId = 1;
 
 function seed() {
+  nextId = 1;
   tasks = [
     { id: nextId++, title: 'Write test plan', done: true },
     { id: nextId++, title: 'Automate login flow', done: false },
