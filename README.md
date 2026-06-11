@@ -253,7 +253,7 @@ Mirrors CI exactly. No browser installation, no Defender issues.
 docker compose up --build --abort-on-container-exit
 ```
 
-This starts the app in one container and runs the full test suite in another. The app container is healthy-checked before tests begin.
+This starts the app in one container and runs the API + Chromium tests in another. The app container is healthy-checked before tests begin. Because all workers share that single app container (`BASE_URL=http://app:3000`), there's no per-worker isolation, so the suite runs **single-worker** here (`workers: 1` is applied automatically whenever `BASE_URL` is set) to keep reset-before-each deterministic.
 
 ---
 
@@ -308,7 +308,7 @@ Custom fixtures (`fixtures/test-fixtures.ts`) solve all three:
 - Testing the same requirement at both layers catches two different classes of bug: broken backend logic (API) and broken frontend wiring (UI).
 
 ### Why env-driven `BASE_URL`?
-The `workerServer` fixture reads `process.env.BASE_URL`. When it is set, each worker **skips booting a server** and points tests at that external app (used by Docker compose and for staging/QA environments). When unset (local dev), every worker boots its own Express instance on an ephemeral port. Either way, tests use relative paths (`page.goto('/')`, `api.get('/api/tasks')`) resolved against the fixture-provided `baseURL`, so nothing else changes.
+The `workerServer` fixture reads `process.env.BASE_URL`. When it is set, each worker **skips booting a server** and points tests at that external app (used by Docker compose and for staging/QA environments). When unset (local dev), every worker boots its own Express instance on an ephemeral port. Either way, tests use relative paths (`page.goto('/')`, `api.get('/api/tasks')`) resolved against the fixture-provided `baseURL`, so nothing else changes. **Note:** in `BASE_URL` mode there is no per-worker isolation (one shared app), so the config forces `workers: 1` to keep reset-before-each deterministic.
 
 ### Why a server per worker (not one shared server)?
 The app's "database" is in memory, and `resetState` reseeds it before every test. With one shared server across parallel workers, one test's reset wipes another test's data mid-flight. Booting one app **per worker** isolates that state — see [§14 Real Bugs Fixed](#14-real-bugs-fixed-in-this-project) for the exact race this fixed.

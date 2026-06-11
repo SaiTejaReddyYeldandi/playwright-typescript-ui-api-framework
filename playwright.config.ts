@@ -11,7 +11,10 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,   // fail the build if a stray test.only is committed
   retries: process.env.CI ? 1 : 0,
-  workers: process.env.CI ? 2 : undefined,
+  // With BASE_URL set, every worker shares one external app (Docker/staging), so
+  // there is no per-worker isolation - run serially to keep reset-before-each
+  // deterministic. Otherwise each worker boots its own app and runs in parallel.
+  workers: process.env.BASE_URL ? 1 : process.env.CI ? 2 : undefined,
   reporter: [['html', { open: 'never' }], ['list']],
 
   use: {
